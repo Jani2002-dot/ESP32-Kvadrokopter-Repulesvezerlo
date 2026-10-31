@@ -1,0 +1,224 @@
+#pragma once
+
+// Egy meres a RAM-ban; atvitel csak leallitott motorok mellett.
+constexpr uint32_t RAM_MAX_MINTA = 2000;
+constexpr uint32_t RAM_VARAKOZAS_US = 5000000;
+constexpr uint32_t RAM_IDOTARTAM_US = 8000000;
+constexpr uint32_t LOOP_SZAMLALO_US = 4050;
+constexpr uint32_t LOOP_LED_US = 4200;
+
+enum RAM_Mod : uint8_t { RAM_NINCS, RAM_RATE, RAM_ANGLE, RAM_VEL };
+struct RAM_Minta {
+  uint32_t ido_us;
+  uint32_t ciklus_us;  // Ettol a cikluskezdettol a kovetkezoig.
+  uint32_t munka_us;  // Varakozas elott, a RAM-mentest is beleertve.
+  float jel[6];
+};
+static_assert(sizeof(RAM_Minta) == 36, "Varatlan mintameret");
+RAM_Minta RAM_Adatok[RAM_MAX_MINTA];  // 72000 bajt, nincs futasideju foglalas.
+RAM_Mod RAM_Modja = RAM_NINCS;
+uint32_t RAM_Darab = 0;
+uint32_t RAM_Trigger_us = 0, RAM_Kezdet_us = 0;
+bool RAM_Elokeszitve = false, RAM_Visszaszamlal = false, RAM_Fut = false;
+bool RAM_Angle_Indulaskor = false;
+bool RAM_Kiadas_Zar = false;
+bool RAM_Elozo_Ciklus_Merendo = false;
+int32_t RAM_Fuggo_Minta = -1;
+const char *RAM_Ok = "ures";
+float RAM_PID[18] = {};
+uint32_t RAM_CTM = 0, RAM_LM = 0, RAM_C4050 = 0, RAM_C4200 = 0, RAM_O = 0;
+
+const char *RAM_mod_nev() {
+  if (RAM_Modja == RAM_RATE) return "RATE";
+  if (RAM_Modja == RAM_ANGLE) return "ANGLE";
+  if (RAM_Modja == RAM_VEL) return "VEL";
+  return "NONE";
+}
+
+bool RAM_mod_megfelel() {
+  if (RAM_Modja == RAM_RATE) return !Angle_Mode_Aktiv && !Velocity_Mode_Aktiv;
+  if (RAM_Modja == RAM_ANGLE) return Angle_Mode_Aktiv && !Velocity_Mode_Aktiv;
+  return RAM_Modja == RAM_VEL && Velocity_Mode_Aktiv &&
+    (!RAM_Fut || Angle_Mode_Aktiv == RAM_Angle_Indulaskor);
+}
+
+void RAM_leallitas(const char *ok) {
+  if (RAM_Fut || RAM_Elokeszitve) RAM_Ok = ok;
+  RAM_Fut = false;
+  RAM_Elokeszitve = false;
+  RAM_Visszaszamlal = false;
+}
+
+void RAM_monitor_kezd(uint32_t kezdet) {
+  Ciklus_Ido = kezdet - Elozo_Loop_Kezdet;
+  Elozo_Loop_Kezdet = kezdet;
+  if (RAM_Elozo_Ciklus_Merendo) {
+    if (Ciklus_Ido > Ciklus_Ido_Max) Ciklus_Ido_Max = Ciklus_Ido;
+    if (Ciklus_Ido >= LOOP_SZAMLALO_US) Ciklus_Ido_Max_Szamlalo++;
+  }
+  RAM_Elozo_Ciklus_Merendo = false;
+  // Az utolso minta teljes ciklusideje is bekerul, telitett puffer eseten is.
+  if (RAM_Fuggo_Minta >= 0) {
+    RAM_Adatok[RAM_Fuggo_Minta].ciklus_us = Ciklus_Ido;
+    if (Ciklus_Ido > RAM_CTM) RAM_CTM = Ciklus_Ido;
+    if (Ciklus_Ido >= LOOP_SZAMLALO_US) RAM_C4050++;
+    if (Ciklus_Ido >= LOOP_LED_US) RAM_C4200++;
+    RAM_Fuggo_Minta = -1;
+  }
+}
+
+void RAM_monitor_veg() {
+  RAM_Elozo_Ciklus_Merendo = true;
+  Loop_Munka_us = micros() - Loop_Timer;
+  if (Loop_Munka_us > Loop_Max_Munka_us) Loop_Max_Munka_us = Loop_Munka_us;
+  if (Loop_Munka_us > 4000) Loop_Tulcsordulas++;
+  if (RAM_Fuggo_Minta >= 0) {
+    RAM_Adatok[RAM_Fuggo_Minta].munka_us = Loop_Munka_us;
+    if (Loop_Munka_us > RAM_LM) RAM_LM = Loop_Munka_us;
+    if (Loop_Munka_us > 4000) RAM_O++;
+  }
+}
+
+void RAM_mintavetel(uint32_t kezdet) {
+  if (!RAM_Fut && !RAM_Elokeszitve) return;
+  if (!RAM_mod_megfelel() || Vevo_Ertekek[2] <= 1130) {
+    if (RAM_Fut) RAM_leallitas("modvaltas_vagy_alacsony_gaz");
+    RAM_Visszaszamlal = false;
+    return;
+  }
+  if (!RAM_Fut) {
+    if (!RAM_Visszaszamlal) {
+      RAM_Trigger_us = kezdet;
+      RAM_Visszaszamlal = true;
+    }
+    if (kezdet - RAM_Trigger_us < RAM_VARAKOZAS_US) return;
+    RAM_Kezdet_us = kezdet;
+    RAM_Angle_Indulaskor = Angle_Mode_Aktiv;
+    RAM_Fut = true;
+    RAM_Elokeszitve = false;
+    RAM_Ok = "rogzites";
+    const float pid[] = { P_Rate_Roll, I_Rate_Roll, D_Rate_Roll,
+      P_Rate_Pitch, I_Rate_Pitch, D_Rate_Pitch,
+      P_Rate_Yaw, I_Rate_Yaw, D_Rate_Yaw,
+      P_Angle_Roll, I_Angle_Roll, D_Angle_Roll,
+      P_Angle_Pitch, I_Angle_Pitch, D_Angle_Pitch,
+      P_Fuggoleges_sebesseg, I_Fuggoleges_sebesseg, D_Fuggoleges_sebesseg };
+    for (unsigned i = 0; i < 18; i++) RAM_PID[i] = pid[i];
+  }
+  if (kezdet - RAM_Kezdet_us >= RAM_IDOTARTAM_US || RAM_Darab >= RAM_MAX_MINTA) {
+    RAM_leallitas("kesz");
+    return;
+  }
+  RAM_Minta &m = RAM_Adatok[RAM_Darab];
+  m.ido_us = kezdet - RAM_Kezdet_us;
+  m.ciklus_us = 0;
+  m.munka_us = 0;
+  for (unsigned i = 0; i < 6; i++) m.jel[i] = 0;
+  if (RAM_Modja == RAM_RATE) {
+    m.jel[0] = Kivant_Roll_Rate; m.jel[1] = Szurt_Roll_Rate;
+    m.jel[2] = Kivant_Pitch_Rate; m.jel[3] = Szurt_Pitch_Rate;
+    m.jel[4] = Kivant_Yaw_Rate; m.jel[5] = Szurt_Yaw_Rate;
+  } else if (RAM_Modja == RAM_ANGLE) {
+    m.jel[0] = Kivant_Angle_Roll; m.jel[1] = Kalman_Angle_Roll;
+    m.jel[2] = Kivant_Angle_Pitch; m.jel[3] = Kalman_Angle_Pitch;
+  } else {
+    m.jel[0] = Kivant_Fuggoleges_sebesseg; m.jel[1] = Kalman_Fuggoleges_sebesseg;
+  }
+  RAM_Fuggo_Minta = RAM_Darab++;
+  if (RAM_Darab == RAM_MAX_MINTA) RAM_leallitas("puffer_tele");
+}
+
+void RAM_status() {
+  SerialBT.printf("# STATUS mode=%s samples=%lu prepared=%d recording=%d lock=%d reason=%s\n",
+    RAM_mod_nev(), (unsigned long)RAM_Darab, RAM_Elokeszitve, RAM_Fut, RAM_Kiadas_Zar, RAM_Ok);
+  SerialBT.printf("# LOOP LM_us=%lu CTM_us=%lu O_work_gt4000=%lu C_ge4050=%lu\n",
+    (unsigned long)Loop_Max_Munka_us, (unsigned long)Ciklus_Ido_Max,
+    (unsigned long)Loop_Tulcsordulas, (unsigned long)Ciklus_Ido_Max_Szamlalo);
+  SerialBT.printf("# RECORD LM_us=%lu CTM_us=%lu O_work_gt4000=%lu C_ge4050=%lu C_ge4200=%lu\n",
+    (unsigned long)RAM_LM, (unsigned long)RAM_CTM, (unsigned long)RAM_O,
+    (unsigned long)RAM_C4050, (unsigned long)RAM_C4200);
+}
+
+bool RAM_sor_kuldes(const char *sor) {
+  if (!SerialBT.hasClient()) return false;
+  size_t hossz = strlen(sor);
+  return SerialBT.write((const uint8_t *)sor, hossz) == hossz;
+}
+
+void RAM_adat_kuldes() {
+  if (!RAM_Darab || RAM_Fut || RAM_Elokeszitve || RAM_Fuggo_Minta >= 0) {
+    SerialBT.println("# ERROR nincs lezart meres");
+    return;
+  }
+  // Az atvitel utan is tiltjuk a motorokat, amig foldon RESUME nem erkezik.
+  RAM_Kiadas_Zar = true;
+  char sor[256];
+  snprintf(sor, sizeof(sor), "# BEGIN mode=%s samples=%lu nominal_hz=250 angle_mode=%d reason=%s\n",
+    RAM_mod_nev(), (unsigned long)RAM_Darab, RAM_Angle_Indulaskor, RAM_Ok);
+  if (!RAM_sor_kuldes(sor)) return;
+  RAM_status();
+  SerialBT.print("# PID rate_roll_P,I,D,rate_pitch_P,I,D,rate_yaw_P,I,D,angle_roll_P,I,D,angle_pitch_P,I,D,velocity_P,I,D=");
+  for (unsigned i = 0; i < 18; i++) {
+    SerialBT.print(RAM_PID[i], 6);
+    SerialBT.print(i == 17 ? "\n" : ",");
+  }
+  const char *fejlec = "index,t_us,cycle_us,work_us,roll_sp_deg_s,roll_pv_deg_s,pitch_sp_deg_s,pitch_pv_deg_s,yaw_sp_deg_s,yaw_pv_deg_s\n";
+  if (RAM_Modja == RAM_ANGLE) fejlec = "index,t_us,cycle_us,work_us,roll_sp_deg,roll_pv_deg,pitch_sp_deg,pitch_pv_deg\n";
+  if (RAM_Modja == RAM_VEL) fejlec = "index,t_us,cycle_us,work_us,velocity_sp_cm_s,velocity_pv_cm_s\n";
+  if (!RAM_sor_kuldes(fejlec)) return;
+  for (uint32_t i = 0; i < RAM_Darab; i++) {
+    const RAM_Minta &m = RAM_Adatok[i];
+    int n = snprintf(sor, sizeof(sor), "%lu,%lu,%lu,%lu",
+      (unsigned long)i, (unsigned long)m.ido_us, (unsigned long)m.ciklus_us, (unsigned long)m.munka_us);
+    unsigned jelek = RAM_Modja == RAM_RATE ? 6 : RAM_Modja == RAM_ANGLE ? 4 : 2;
+    for (unsigned j = 0; j < jelek && n > 0 && n < (int)sizeof(sor); j++) {
+      n += snprintf(sor + n, sizeof(sor) - n, ",%.6f", (double)m.jel[j]);
+    }
+    if (n <= 0 || n >= (int)sizeof(sor) - 1) return;
+    sor[n++] = '\n'; sor[n] = '\0';
+    if (!RAM_sor_kuldes(sor)) return;
+    delay(1);
+  }
+  snprintf(sor, sizeof(sor), "# END samples=%lu; motor_lock=1; RESUME csak foldon\n", (unsigned long)RAM_Darab);
+  RAM_sor_kuldes(sor);
+}
+
+bool RAM_parancs(const String &parancs) {
+  if (parancs == "STATUS") { RAM_status(); return true; }
+  if (parancs == "DATA") { RAM_adat_kuldes(); return true; }
+  if (parancs == "RESUME") {
+    RAM_Kiadas_Zar = false;
+    SerialBT.println("# OK adatkuldesi motorzar feloldva; EStop tovabbra is ervenyes");
+    return true;
+  }
+  if (parancs == "CANCEL") {
+    RAM_leallitas("cancel");
+    SerialBT.println("# OK rogzitest leallitottam, adatok megmaradtak");
+    return true;
+  }
+  if (parancs == "CLEAR") {
+    RAM_leallitas("ures");
+    RAM_Ok = "ures";
+    RAM_Darab = 0; RAM_Modja = RAM_NINCS;
+    RAM_CTM = RAM_LM = RAM_C4050 = RAM_C4200 = RAM_O = 0;
+    SerialBT.println("# OK RAM-adatok torolve");
+    return true;
+  }
+  RAM_Mod mod = RAM_NINCS;
+  if (parancs == "LOG RATE") mod = RAM_RATE;
+  if (parancs == "LOG ANGLE") mod = RAM_ANGLE;
+  if (parancs == "LOG VEL") mod = RAM_VEL;
+  if (mod == RAM_NINCS) return false;
+  if (RAM_Darab || RAM_Elokeszitve || RAM_Fut || RAM_Kiadas_Zar) {
+    SerialBT.println("# ERROR elobb DATA/CLEAR, adatkuldes utan RESUME");
+    return true;
+  }
+  RAM_Modja = mod;
+  RAM_Elokeszitve = true;
+  RAM_Visszaszamlal = false;
+  RAM_Ok = "varakozik";
+  // Uj mereshez kulon monitorablak; a parancs ideje nem kerul bele.
+  Ciklus_Ido_Max = Ciklus_Ido_Max_Szamlalo = Loop_Max_Munka_us = Loop_Tulcsordulas = 0;
+  SerialBT.println("# READY megfelelo mod + EStop KI + gaz>1130, 5 s varakozas, majd 8 s meres");
+  return true;
+}

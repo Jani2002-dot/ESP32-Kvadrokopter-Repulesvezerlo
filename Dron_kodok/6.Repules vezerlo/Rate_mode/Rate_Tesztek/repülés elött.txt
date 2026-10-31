@@ -1,0 +1,65 @@
+REPÜLÉS ELŐTTI ADATOK
+
+
+
+Akku:
+
+- Akku sorszám / neve:  Tattu R line 2000mah
+
+- Induló feszültség cellamérővel: 1 cella 4.2V 4 cella 16.8V
+
+- Induló teljes feszültség: 16.8V 
+
+- Akku kb. hány %-os volt: 100% 
+
+
+
+PID értékek:
+
+- P Roll/Pitch: 0.485 
+
+- I Roll/Pitch: 1.435 
+
+- D Roll/Pitch: 0.01075 
+
+- P Yaw: 0.585 
+
+- I Yaw: 1.3 
+
+- D Yaw: 0 
+
+
+
+Drón állapot:
+
+- Propok: használt de nem serült azért, max picike ütés de nem vészes 
+
+- Akku rögzítés: stabil tépözérral és csuszásgátló gumi van alatta 
+
+- MPU/FC rögzítés: stabil 
+
+- Motorok kézzel forgatva: mind sima 
+
+- Csavarok átnézve: igen 
+
+
+
+Teszt körülmény:
+
+- Helyszín: kint 
+
+- Szél: nincs 
+
+- Repülési mód: Rate mode
+
+- Debug log: BT terminal mentve
+
+- SWD: remegéskor ON, elmúláskor OFF
+
+
+
+Megjegyzés:
+
+- A remegés általában magától jön 
+
+- Most próbáltam nem túlkorrigálni remegéskor: igen 
