@@ -47,7 +47,7 @@ bool Angle_Mode_Aktiv = false;
 bool Velocity_Mode_Aktiv = false;
 bool Elozo_Angle_Mode_Aktiv = false;
 bool EStop_LED = false;
-byte Biztonsagos_inditas = 0;
+bool Arm_engedelyezve = false;
 uint32_t Arm_Tartas_Kezdete = 0;
 bool Arm_Tartas_Folyamatban = false;
 #pragma endregion
@@ -55,17 +55,17 @@ bool Arm_Tartas_Folyamatban = false;
 #pragma region 04_Rate_adatok
 //számított szögsebességeknek változó
 float Rate_Roll, Rate_Pitch, Rate_Yaw;
-float Szurt_Roll_Rate, Szurt_Pitch_Rate, Szurt_Yaw_Rate;
+float Szurt_Rate_Roll, Szurt_Rate_Pitch, Szurt_Rate_Yaw;
 
 //2500 mintavételt ezekhez adjuk hozzá
 float Rate_Roll_Offset = 0;
 float Rate_Pitch_Offset = 0;
 float Rate_Yaw_Offset = 0;
 
-float Kivant_Roll_Rate, Kivant_Pitch_Rate, Kivant_Yaw_Rate;
-float Hiba_Roll_Rate, Hiba_Pitch_Rate, Hiba_Yaw_Rate;
-float Elozo_Hiba_Roll_Rate, Elozo_Hiba_Pitch_Rate, Elozo_Hiba_Yaw_Rate;
-float Elozo_Iterm_Roll_Rate, Elozo_Iterm_Pitch_Rate, Elozo_Iterm_Yaw_Rate;
+float Kivant_Rate_Roll, Kivant_Rate_Pitch, Kivant_Rate_Yaw;
+float Hiba_Rate_Roll, Hiba_Rate_Pitch, Hiba_Rate_Yaw;
+float Elozo_Hiba_Rate_Roll, Elozo_Hiba_Rate_Pitch, Elozo_Hiba_Rate_Yaw;
+float Elozo_Iterm_Rate_Roll, Elozo_Iterm_Rate_Pitch, Elozo_Iterm_Rate_Yaw;
 #pragma endregion
 
 #pragma region 05_Angle_adatok
@@ -79,7 +79,7 @@ float Kalman_Bizonytalansag_Angle_Roll = 2 * 2;  //bizonytalanságát 2° kezdet
 float Kalman_Angle_Pitch = 0;                     //kezdeti szögbecslést 0°-ra állítottam, mivel az indítás közel vízszintes helyzetben történik
 float Kalman_Bizonytalansag_Angle_Pitch = 2 * 2;  //bizonytalanságát 2° kezdeti szórással, azaz 4°^2 hibavarianciával vettem figyelembe
 
-float Kalman_1D_kimenet[] = { 0, 0 };
+float Kalman_Szog_Kimenet[] = { 0, 0 };
 
 //fly sky távirányítóval beáállított szög -50°-50°
 float Kivant_Angle_Roll, Kivant_Angle_Pitch;
@@ -88,6 +88,13 @@ float Kivant_Angle_Roll, Kivant_Angle_Pitch;
 float Hiba_Angle_Roll, Hiba_Angle_Pitch;
 float Elozo_Hiba_Angle_Roll, Elozo_Hiba_Angle_Pitch;
 float Elozo_Iterm_Angle_Roll, Elozo_Iterm_Angle_Pitch;
+
+float Ts = 0.004;  //250 Hz-es loop miatt 4ms
+
+const int A_szog = 1, H_szog = 1, I_szog = 1;
+float B_szog = Ts;
+float Q_Szog = Ts * Ts * 4 * 4;
+float R_szog = 3 * 3;
 #pragma endregion
 
 #pragma region 06_Velocity_adatok
@@ -101,6 +108,8 @@ float Baro_magassag_kezdetben = 0.0;
 int Baro_kalibracios_szam;
 float Kalman_Magassag, Kalman_Fuggoleges_sebesseg;
 float Kivant_Fuggoleges_sebesseg, Hiba_Fuggoleges_sebesseg, Elozo_Hiba_Fuggoleges_sebesseg, Elozo_Iterm_Fuggoleges_sebesseg;
+uint32_t BMP_meres;
+bool Baro_frissites = false;
 
 //mátrixváltozók deklarálása <sor,oszlop>
 BLA::Matrix<2, 1> xk;
@@ -118,7 +127,7 @@ BLA::Matrix<1, 1> zk;
 #pragma endregion
 
 #pragma region 07_PID_adatok
-float PIDReturn[] = { 0, 0, 0 };
+float PID_kimenetek[] = { 0, 0, 0 };
 bool Iterm_Aktiv = false;
 
 //PID Rate
@@ -135,20 +144,20 @@ float I_Fuggoleges_sebesseg = 0;
 float D_Fuggoleges_sebesseg = 0;
 #pragma endregion
 
-#pragma region 08_Motorvaltozok_es_Loop_valtozok
+#pragma region 08_Motorvaltozok_es_Ciklus_valtozok
 float Motor_1_bemenet, Motor_2_bemenet, Motor_3_bemenet, Motor_4_bemenet;
 float Bemenet_Roll, Bemenet_Pitch, Bemenet_Yaw, Bemenet_Gaz;
 int Motorok_alapjarat = 1180;
 int Motorok_leallitas = 1000;
+int Motorok_max = 2000;
 
 // 250 Hz-es loop vizsgálatához
-uint32_t Loop_Timer;
+uint32_t Ciklus_Idozito;
 uint32_t Ciklus_Ido = 0;
 uint32_t Ciklus_Ido_Max = 0;
-uint32_t Elozo_Loop_Kezdet = 0;
-uint32_t RED_BLINK = 0;
-bool Red_LED_State = false;
-float Ts = 0.004;  //250 Hz-es loop miatt 4ms
+uint32_t Elozo_Ciklus_Kezdet = 0;
+uint32_t Piros_villogas = 0;
+bool Piros_LED_Allapot = false;
 #pragma endregion
 
 #pragma region 09_Akkumulator_meres
@@ -159,6 +168,8 @@ float Aksi_maradek;                 // %-ban
 float Aksi_kezdetben;               // mAh-ban
 float Elfogyasztott_kapacitas = 0;  // mAh-ban
 float Alap_aksi_kapacitas = 2000;   // 2000mAh
+bool Aksi_OK;
+bool Aksi_Alacsony = false;
 #pragma endregion
 #pragma endregion
 
@@ -172,12 +183,15 @@ void kalman_2d(void) {
   xk = A * xk + B * u;
   P = A * P * ~A + Q;  // ~ Transzponáltat jelenti
   L = H * P * ~H + R;
-  K = P * ~H * Inverse(L);  // Inverse(L) -1 hatványát veszi L nek 
+  K = P * ~H * Inverse(L);  // Inverse(L) -1 hatványát veszi L nek
 
-  // Barometrikus korrekció
-  zk = { Baro_magassag };
-  xk = xk + K * (zk - H * xk);
-  P = (I - K * H) * P;
+  // 25 Hz-es kálmán baro korrekció
+  if (Baro_frissites) {
+    // Barometrikus korrekció
+    zk = { Baro_magassag };
+    xk = xk + K * (zk - H * xk);
+    P = (I - K * H) * P;
+  }
 
   //Frissítés
   Kalman_Magassag = xk(0, 0);             //(sor,oszlop)
@@ -187,63 +201,88 @@ void kalman_2d(void) {
 bool BMP_adat_olvasas(void) {
 
   Wire.beginTransmission(0x77);
-  Wire.write(0xF7);  //itt kezdődik az adatok kiolvasása
-  Wire.endTransmission();
-  Wire.requestFrom(0x77, 6);          //6 bájt kérése
-  uint32_t press_msb = Wire.read();   //0xF7
-  uint32_t press_lsb = Wire.read();   //0xF8
-  uint32_t press_xlsb = Wire.read();  //0xF9
-  uint32_t temp_msb = Wire.read();    //0xFA
-  uint32_t temp_lsb = Wire.read();    //0xFB
-  uint32_t temp_xlsb = Wire.read();   //0xFC
+  Wire.write(0xF7);
 
-  //nyers, kompennzálatlan és kalibrálatlan nyomás
-  signed long int adc_P = (press_msb << 12) | (press_lsb << 4) | (press_xlsb >> 4);
-  //nyers, kompennzálatlan és kalibrálatlan hőmérséklet
-  signed long int adc_T = (temp_msb << 12) | (temp_lsb << 4) | (temp_xlsb >> 4);
+  if (Wire.endTransmission(false) != 0) {
+    return false;
+  }
 
-  // A hőmérsékletet °C-ban adja vissza, a felbontás 0,01 °C.
-  // Az „5123” kimeneti érték 51,23 °C-nak felel meg.
-  // A t_fine globális változóként a pontosított hőmérsékletértéket tárolja.
-  signed long int var1, var2;
-  var1 = ((((adc_T >> 3) - ((signed long int)dig_T1 << 1))) * ((signed long int)dig_T2)) >> 11;
-  var2 = (((((adc_T >> 4) - ((signed long int)dig_T1)) * ((adc_T >> 4) - ((signed long int)dig_T1))) >> 12) * ((signed long int)dig_T3)) >> 14;
-  signed long int t_fine = var1 + var2;
+  if (Wire.requestFrom((uint8_t)0x77, (uint8_t)6) != 6) {
+    return false;
+  }
 
-  // A nyomást Pa-ban adja vissza, előjel nélküli 32 bites egész számként.
-  // A „96386” kimeneti érték 96386 Pa-nak felel meg = 963,86 hPa.
-  unsigned long int p;
-  var1 = (((signed long int)t_fine) >> 1) - (signed long int)64000;
-  var2 = (((var1 >> 2) * (var1 >> 2)) >> 11) * ((signed long int)dig_P6);
-  var2 = var2 + ((var1 * ((signed long int)dig_P5)) << 1);
-  var2 = (var2 >> 2) + (((signed long int)dig_P4) << 16);
-  var1 = (((dig_P3 * (((var1 >> 2) * (var1 >> 2)) >> 13)) >> 3) + ((((signed long int)dig_P2) * var1) >> 1)) >> 18;
-  var1 = ((((32768 + var1)) * ((signed long int)dig_P1)) >> 15);
+  uint32_t press_msb = Wire.read();
+  uint32_t press_lsb = Wire.read();
+  uint32_t press_xlsb = Wire.read();
+  uint32_t temp_msb = Wire.read();
+  uint32_t temp_lsb = Wire.read();
+  uint32_t temp_xlsb = Wire.read();
+
+  // Nyers, kompenzálatlan nyomás és hőmérséklet
+  int32_t adc_P = (press_msb << 12) | (press_lsb << 4) | (press_xlsb >> 4);
+  int32_t adc_T = (temp_msb << 12) | (temp_lsb << 4) | (temp_xlsb >> 4);
+
+  // Hőmérséklet-kompenzáció (Bosch 32 bites képlet)
+  int32_t var1_T, var2_T;
+
+  var1_T = ((((adc_T >> 3) - ((int32_t)dig_T1 << 1)))
+            * ((int32_t)dig_T2))
+           >> 11;
+
+  var2_T = (((((adc_T >> 4) - ((int32_t)dig_T1))
+              * ((adc_T >> 4) - ((int32_t)dig_T1)))
+             >> 12)
+            * ((int32_t)dig_T3))
+           >> 14;
+
+  int32_t t_fine = var1_T + var2_T;
+
+  // Nyomáskompenzáció (Bosch 64 bites képlet)
+  int64_t var1, var2, p;
+
+  var1 = ((int64_t)t_fine) - 128000;
+
+  var2 = var1 * var1 * (int64_t)dig_P6;
+  var2 = var2 + ((var1 * (int64_t)dig_P5) << 17);
+  var2 = var2 + (((int64_t)dig_P4) << 35);
+
+  var1 = ((var1 * var1 * (int64_t)dig_P3) >> 8)
+         + ((var1 * (int64_t)dig_P2) << 12);
+
+  var1 = (((((int64_t)1 << 47) + var1)
+           * (int64_t)dig_P1)
+          >> 33);
+
   if (var1 == 0) {
     return false;
-  }  // Kerüld el a nullával való osztás miatt fellépő kivételt.
-  p = (((unsigned long int)(((signed long int)1048576) - adc_P) - (var2 >> 12))) * 3125;
-  if (p < 0x80000000) {
-    p = (p << 1) / ((unsigned long int)var1);
-  } else {
-    p = (p / (unsigned long int)var1) * 2;
   }
-  var1 = (((signed long int)dig_P9) * ((signed long int)(((p >> 3) * (p >> 3)) >> 13))) >> 12;
-  var2 = (((signed long int)(p >> 2)) * ((signed long int)dig_P8)) >> 13;
-  p = (unsigned long int)((signed long int)p + ((var1 + var2 + dig_P7) >> 4));  //eredmény Pa-ban
-  double nyomas = (double)p / 100;                                              //átváltjuk hPa-ra
 
-  //A BMP280 adatlap szerinti nyomástartomány körülbelül 300–1100 hPa
+  p = 1048576 - adc_P;
+  p = (((p << 31) - var2) * 3125) / var1;
+
+  var1 = (((int64_t)dig_P9) * (p >> 13) * (p >> 13)) >> 25;
+  var2 = (((int64_t)dig_P8) * p) >> 19;
+
+  p = ((p + var1 + var2) >> 8)
+      + (((int64_t)dig_P7) << 4);
+
+  // A Bosch eredménye Q24.8 formátumú.
+  // Osztás 256-tal: Pa, majd 100-zal: hPa.
+  uint32_t p_q24_8 = (uint32_t)p;
+  double nyomas = (double)p_q24_8 / 25600.0;
+
+  // A BMP280 adatlap szerinti nyomástartomány
   if (!isfinite(nyomas) || nyomas < 300.0 || nyomas > 1100.0) {
     return false;
   }
 
-  Baro_magassag = 44330 * (1 - pow(nyomas / 1013.25, 1.0 / 5.255)) * 100;  //magasság kiszámítása (*100 m és cm közötti áltváltás)
+  // Barometrikus magasság számítása [cm]
+  Baro_magassag = 44330.0 * (1.0 - pow(nyomas / 1013.25, 1.0 / 5.255)) * 100.0;
 
-  //Az isfinite() azt ellenőrzi, hogy egy lebegőpontos szám valódi, véges szám-e.
   if (!isfinite(Baro_magassag)) {
     return false;
   }
+
   return true;
 }
 
@@ -263,17 +302,22 @@ void BMP_regiszterek_beallitasa(void) {
 }
 
 void BMP_kalibracio(void) {
-  uint8_t adat[24], i = 0;
 
-  //kalibrációs adatok kiolvasása
+  uint8_t adat[24];
+
   Wire.beginTransmission(0x77);
-  Wire.write(0x88);  //itt kezdődik a dig_T1
-  Wire.endTransmission();
-  Wire.requestFrom(0x77, 24);  //kérünk 24 byte-ot
+  Wire.write(0x88);
 
-  while (Wire.available()) {
-    adat[i] = Wire.read();  //24 byte mentése tömbe
-    i++;
+  if (Wire.endTransmission(false) != 0) {
+    return;
+  }
+
+  if (Wire.requestFrom((uint8_t)0x77, (uint8_t)24) != 24) {
+    return;
+  }
+
+  for (int i = 0; i < 24; i++) {
+    adat[i] = Wire.read();
   }
 
   // LSB/MSB szerint jönnek az adatok Wire.read()-nél ezért kell így bitshiftelni
@@ -307,115 +351,107 @@ void BMP_kalibracio(void) {
   Baro_magassag_kezdetben /= Ervenyes_mintak;
 }
 
-void kalman_1d(float Kalman_allapot, float Kalman_Bizonytalansag, float Kalman_bemenet, float Kalman_meres) {
-  Kalman_allapot = 1 * Kalman_allapot + Ts * Kalman_bemenet;
-  Kalman_Bizonytalansag = 1 * Kalman_Bizonytalansag * 1 + Ts * Ts * 4 * 4;
-  float Kalman_erosites = Kalman_Bizonytalansag * 1 / (1 * Kalman_Bizonytalansag * 1 + 3 * 3);
-  Kalman_allapot = Kalman_allapot + Kalman_erosites * (Kalman_meres - 1 * Kalman_allapot);
-  Kalman_Bizonytalansag = (1 - Kalman_erosites * 1) * Kalman_Bizonytalansag;
-  Kalman_1D_kimenet[0] = Kalman_allapot;         //Korrigált szög PID-nek és következő iteráccióba
-  Kalman_1D_kimenet[1] = Kalman_Bizonytalansag;  //Korrigált hibakovariancia következő iterációba
+void Kalman_Szog(float x, float P, float u, float z) {
+  x = A_szog * x + B_szog * u;
+  P = A_szog * P * A_szog + Q_szog;
+  float K = P * H_szog / (H_szog * P * H_szog + R_szog);
+  x = x + K * (z - H_szog * x);
+  P = (I_szog - K * H_szog) * P;
+  Kalman_Szog_Kimenet[0] = x;  //Korrigált szög PID-nek és következő iteráccióba
+  Kalman_Szog_Kimenet[1] = P;  //Korrigált hibakovariancia következő iterációba
 }
 
 void ADC_meres(void) {
-  Feszultseg = (float)analogRead(feszultseg_meres_PIN) / 206.818182 + 1.2;  //4095/(3.3*6)=206.8182
-  Aram = (float)analogRead(aram_meres_PIN) / 37.227273;                     // ADC / ((4095/3.3V)*0.03 V/A)=37.227273 ---> ADC*0,02686203
+  Feszultseg = analogReadMilliVolts(feszultseg_meres_PIN) / 1000.0f * 6.0f;  // Feszültség [V]
+  Aram = analogReadMilliVolts(aram_meres_PIN) / 15.0f;                       // Áram [A] (30mV / A)
 }
 
-void IBUS_Olvasas(void) {  // Paraméter és visszatérési érték nélküli függvény az iBUS-adatok feldolgozásához.
 
-  while (Serial2.available()) {  // Addig ismétel, amíg van kiolvasható bájt a Serial2 vételi pufferében.
-    uint8_t b = Serial2.read();  // Kiolvassa a következő bájtot, és eltárolja egy 8 bites, előjel nélküli változóban.
+void IBUS_Olvasas(void) {
+  while (Serial2.available() > 0) {
+    uint8_t b = Serial2.read();
 
-    if (IBUS_Index == 0) {  // Ha még nincs meg a keret első bájtja, a keretkezdetet keresi.
-      if (b != 0x20) {      // Ellenőrzi, hogy a bájt eltér-e az elvárt 0x20 értéktől, amely 32-t jelent.
-        continue;           // Ezt a bájtot eldobja, és a while következő körében a következő rendelkezésre álló bájttal folytatja.
-      }                     // Az első bájt értékének ellenőrzése véget ér.
-    }                       // A keret első bájtjához tartozó feltételes rész vége.
+    // Keretkezdet: 0x20, majd 0x40.
+    if (IBUS_Index == 0) {
+      if (b != 0x20) continue;
 
-    if (IBUS_Index == 1) {  // Ha az első bájt már megvan, a második bájtot ellenőrzi.
-      if (b != 0x40) {      // A második bájtnak 0x40 értékűnek kell lennie.
-        IBUS_Index = 0;     // Hibás második bájtnál elölről kezdi a keret keresését.
-        continue;           // A jelenlegi bájtot eldobja, és a következő rendelkezésre álló bájttal folytatja.
-      }                     // A második bájt értékének ellenőrzése véget ér.
-    }                       // A keret második bájtjához tartozó feltételes rész vége.
+      IBUS_Buffer[0] = b;
+      IBUS_Index = 1;
+      continue;
+    }
 
-    IBUS_Buffer[IBUS_Index++] = b;  // Eltárolja a bájtot az aktuális indexen, majd eggyel növeli az indexet.
+    if (IBUS_Index == 1 && b != 0x40) {
+      // Újabb 0x20 esetén új keret kezdődhet.
+      IBUS_Index = (b == 0x20) ? 1 : 0;
+      continue;
+    }
 
-    if (IBUS_Index >= 32) {  // Ha összegyűlt a teljes, 32 bájtos keret, megkezdi annak ellenőrzését.
-      IBUS_Index = 0;        // A következő keret fogadásához visszaállítja a puffer indexét; a puffer tartalmát nem törli.
+    IBUS_Buffer[IBUS_Index++] = b;
 
-      uint16_t Checksum = 0xFFFF;  // Az ellenőrző összeg kezdőértéke 65535, 16 bites előjel nélküli változóban.
+    // A részleges keret a következő hívásig megmarad.
+    if (IBUS_Index < 32) continue;
+    IBUS_Index = 0;
 
-      for (uint8_t i = 0; i < 30; i++) {  // Végigmegy a keret első 30 bájtján, a 0–29. indexeken.
-        Checksum -= IBUS_Buffer[i];       // Az aktuális bájt értékét kivonja az ellenőrző összegből.
-      }                                   // A két záró ellenőrző bájt kimarad a számításból.
+    // Ellenőrző összeg számítása.
+    uint16_t Checksum = 0xFFFF;
 
-      uint16_t Kapott_Checksum = IBUS_Buffer[30] | (IBUS_Buffer[31] << 8);
-      // A 30. indexű bájt az alsó, a 31. indexű a felső helyiértékű bájt.
-      // A << 8 a felső bájtot nyolc bittel balra tolja, a | bitenkénti VAGY pedig összekapcsolja a két bájtot.
+    for (uint8_t i = 0; i < 30; i++) {
+      Checksum -= IBUS_Buffer[i];
+    }
 
-      if (Checksum == Kapott_Checksum) {  // Csak egyező számított és kapott ellenőrző összegnél dolgozik tovább.
-        uint16_t Temp[7];                 // Ideiglenes tömb hét darab 16 bites csatornaérték tárolására.
+    uint16_t Kapott_Checksum =
+      (uint16_t)IBUS_Buffer[30] | ((uint16_t)IBUS_Buffer[31] << 8);
 
-        Temp[0] = IBUS_Buffer[2] | (IBUS_Buffer[3] << 8);    // CH1: a roll-parancs összeállítása az alsó és felső bájtból.
-        Temp[1] = IBUS_Buffer[4] | (IBUS_Buffer[5] << 8);    // CH2: a pitch-parancs összeállítása.
-        Temp[2] = IBUS_Buffer[6] | (IBUS_Buffer[7] << 8);    // CH3: a gázparancs összeállítása.
-        Temp[3] = IBUS_Buffer[8] | (IBUS_Buffer[9] << 8);    // CH4: a yaw-parancs összeállítása.
-        Temp[4] = IBUS_Buffer[10] | (IBUS_Buffer[11] << 8);  // CH5: az SWA leállítókapcsoló csatornaértékének összeállítása.
-        Temp[5] = IBUS_Buffer[12] | (IBUS_Buffer[13] << 8);  // CH6: az SWD RATE/ANGLE módválasztó csatornaértékének összeállítása.
-        Temp[6] = IBUS_Buffer[14] | (IBUS_Buffer[15] << 8);  // CH7: az SWB csatornaértékének összeállítása; a hozzá tartozó módváltás lent ki van kapcsolva.
+    if (Checksum != Kapott_Checksum) continue;
 
-        bool Ervenyes = true;  // Kiindulásként megfelelőnek tekinti a csatornaértékeket; bármelyik hibás érték ezt felülírja.
+    // A Velocity program hét csatornát használ.
+    uint16_t Temp[7];
+    bool Ervenyes = true;
 
-        if (Temp[0] < 900 || Temp[0] > 2100) Ervenyes = false;  // Érvénytelen, ha a CH1 értéke 900 alatti VAGY 2100 feletti.
-        if (Temp[1] < 900 || Temp[1] > 2100) Ervenyes = false;  // Ugyanezt a tartományellenőrzést elvégzi a CH2 értékén.
-        if (Temp[2] < 900 || Temp[2] > 2100) Ervenyes = false;  // Ellenőrzi a CH3, azaz a gázcsatorna értékét.
-        if (Temp[3] < 900 || Temp[3] > 2100) Ervenyes = false;  // Ellenőrzi a CH4, azaz a yaw-csatorna értékét.
-        if (Temp[4] < 900 || Temp[4] > 2100) Ervenyes = false;  // Ellenőrzi a CH5, azaz az SWA csatorna értékét.
-        if (Temp[5] < 900 || Temp[5] > 2100) Ervenyes = false;  // Ellenőrzi a CH6, azaz az SWD csatorna értékét.
-        if (Temp[6] < 900 || Temp[6] > 2100) Ervenyes = false;  // Ellenőrzi a CH7 értékét is, annak ellenére, hogy a módváltása inaktív.
+    for (uint8_t i = 0; i < 7; i++) {
+      uint8_t also = 2 + 2 * i;
 
-        if (Ervenyes) {               // Csak akkor veszi át az adatokat, ha mind a hét érték a megengedett tartományon belül van.
-          Vevo_Ertekek[0] = Temp[0];  // Frissíti a program által használt roll-parancsot.
-          Vevo_Ertekek[1] = Temp[1];  // Frissíti a pitch-parancsot.
-          Vevo_Ertekek[2] = Temp[2];  // Frissíti a gázparancsot.
-          Vevo_Ertekek[3] = Temp[3];  // Frissíti a yaw-parancsot.
-          Vevo_Ertekek[4] = Temp[4];  // Frissíti az SWA leállítókapcsoló csatornaértékét.
-          Vevo_Ertekek[5] = Temp[5];  // Frissíti az SWD módválasztó csatornaértékét.
-          Vevo_Ertekek[6] = Temp[6];  // Frissíti az SWB csatornaértékét; ettől még nem kapcsol be a velocity mód.
+      Temp[i] = (uint16_t)IBUS_Buffer[also] | ((uint16_t)IBUS_Buffer[also + 1] << 8);
 
-          Utolso_IBUS_Csomag_Ido = millis();  // Eltárolja az érvényes csomag feldolgozásának időpontját milliszekundumban.
+      if (Temp[i] < 900 || Temp[i] > 2100) {
+        Ervenyes = false;
+      }
+    }
 
-          IBUS_Kapcsolat_El = true;  // Jelzi, hogy érkezett elfogadott iBUS-csomag.
-          Failsafe = false;          // Törli a failsafe jelzőt; az ARM-engedélyt ez önmagában nem állítja vissza.
+    if (!Ervenyes) continue;
 
-          if (Vevo_Ertekek[4] > 1600) {         // Ha az SWA csatorna értéke meghaladja az 1600-at:
-            EStop_Allapot = true;               // Aktiválja a leállítási kérést; a motorokat a főciklus leállítási ága kezeli.
-          } else if (Vevo_Ertekek[4] < 1400) {  // Egyébként, ha az SWA csatorna értéke 1400 alatti:
-            EStop_Allapot = false;              // Megszünteti a kapcsolóból származó leállítási kérést.
-          }                                     // 1400 és 1600 között, a határokat is beleértve, az EStop_Allapot nem változik.
+    // Csatornaértékek átvétele.
+    for (uint8_t i = 0; i < 7; i++) {
+      Vevo_Ertekek[i] = Temp[i];
+    }
 
-          if (Vevo_Ertekek[5] > 1600) {         // Ha az SWD csatorna értéke meghaladja az 1600-at:
-            Angle_Mode_Aktiv = true;            // Kiválasztja az ANGLE üzemmódot.
-          } else if (Vevo_Ertekek[5] < 1400) {  // Egyébként, ha az SWD csatorna értéke 1400 alatti:
-            Angle_Mode_Aktiv = false;           // Kikapcsolja az ANGLE módot, így a főciklus RATE módot használ.
-          }                                     // 1400 és 1600 között az előző üzemmód marad érvényben.
+    // Csak elfogadott keret frissíti a kapcsolatot.
+    Utolso_IBUS_Csomag_Ido = millis();
+    IBUS_Kapcsolat_El = true;
+    Failsafe = false;
 
-          // Az alábbi blokk megjegyzésben van, ezért egyetlen sora sem hajtódik végre.
+    // CH5 - SWA: motorleállítás.
+    if (Vevo_Ertekek[4] > 1600) {
+      EStop_Allapot = true;
+    } else if (Vevo_Ertekek[4] < 1400) {
+      EStop_Allapot = false;
+    }
 
-          if (Vevo_Ertekek[6] > 1600) {         // Aktív kódként az SWB 1600 feletti értékét vizsgálná.
-            Velocity_Mode_Aktiv = true;         // Bekapcsolná a függőleges sebesség szabályozásának üzemmódját.
-          } else if (Vevo_Ertekek[6] < 1400) {  // Az SWB 1400 alatti értékét vizsgálná.
-            Velocity_Mode_Aktiv = false;        // Kikapcsolná a velocity módot, és visszaállna a közvetlen gázparancsra.
-          }                                     // A köztes tartományban megtartaná az előző állapotot.
+    // CH6 - SWD: RATE / ANGLE mód.
+    if (Vevo_Ertekek[5] > 1600) {
+      Angle_Mode_Aktiv = true;
+    } else if (Vevo_Ertekek[5] < 1400) {
+      Angle_Mode_Aktiv = false;
+    }
 
-
-        }  // Az érvényes csatornaértékek átvételének és a kapcsolók kiértékelésének vége.
-      }    // Az egyező ellenőrző összeg esetén végrehajtott rész vége.
-    }      // A teljes, 32 bájtos keret feldolgozásának vége.
-  }        // A vételi puffer feldolgozásának vége; üres puffernél kilép a while ciklusból.
-}  // A függvény visszatér oda, ahonnan meghívták.
+    // CH7 - SWB: VELOCITY mód.
+    if (Vevo_Ertekek[6] > 1600) {
+      Velocity_Mode_Aktiv = true;
+    } else if (Vevo_Ertekek[6] < 1400) {
+      Velocity_Mode_Aktiv = false;
+    }
+  }
+}
 
 void IBUS_Failsafe_Ellenorzes(void) {  // Paraméter és visszatérési érték nélküli függvény az iBUS-kapcsolat időtúllépésének ellenőrzésére.
   uint32_t most = millis();            // Eltárolja az aktuális időt milliszekundumban, 32 bites előjel nélküli változóban.
@@ -441,9 +477,12 @@ void IBUS_Failsafe_Ellenorzes(void) {  // Paraméter és visszatérési érték 
 
 void Arm_Ellenorzes(void) {
   bool Arm_Feltetel =
-    !Failsafe && !EStop_Allapot && Vevo_Ertekek[2] <= 1005 &&  // Gáz lent
-    Vevo_Ertekek[0] >= 1995 &&                                 // Roll végállás
-    Vevo_Ertekek[3] >= 1995;                                   // Yaw végállás
+    !Failsafe &&                //nincs failsafe
+    !EStop_Allapot &&           //nincs estop
+    Vevo_Ertekek[0] >= 1995 &&  // Roll: jobb végállás
+    Vevo_Ertekek[1] <= 1005 &&  // Pitch: alsó végállás
+    Vevo_Ertekek[2] <= 1005 &&  // Gáz: alsó végállás
+    Vevo_Ertekek[3] >= 1995;    // Yaw: bal végállás
 
   if (!Arm_Feltetel) {
     // Ha megszakad a feltétel, újra kell kezdeni a tartást.
@@ -460,8 +499,9 @@ void Arm_Ellenorzes(void) {
 
   // 1 mp-ig tartani kell arm feltételeket
   if (Most - Arm_Tartas_Kezdete >= 1000) {
-    Biztonsagos_inditas = 1;
+    Arm_engedelyezve = true;
     Arm_Tartas_Folyamatban = false;
+    Ciklus_Ido_Max = 0;
   }
 }
 
@@ -470,7 +510,7 @@ void MPU_regiszterek_beallitasa(void) {
   //MPU aktiválása (felébesztése)
   Wire.beginTransmission(0x68);  //MPU-val való komunikáció
   Wire.write(0x6B);              //kérés küldése a regiszer indítására
-  Wire.write(0x00);              //MPU felébesztésének beleírása HEX-be
+  Wire.write(0x01);              //MPU felébesztésének beleírása HEX-be
   Wire.endTransmission();        //küldés
 
   // 42 Hz aluláteresztő beállítása
@@ -526,9 +566,17 @@ void MPU_olvasas(void) {
   Acc_Y = (float)Acc_YLSB / 4096 + 0.0279;
   Acc_Z = (float)Acc_ZLSB / 4096 - 0.10150;
 
+  // Gyorsulásvektor nagysága [g]
+  float a_norm = sqrtf(Acc_X * Acc_X + Acc_Y * Acc_Y + Acc_Z * Acc_Z);
+
+  if (a_norm > 0.0001f) {
+    Angle_Roll = asinf(Acc_Y / a_norm) * (180.0f / PI);
+    Angle_Pitch = asinf(-Acc_X / a_norm) * (180.0f / PI);
+  }
+
   //Szögek kiszámítása árkusz tangens fgv-el de  az Arduinoba Radiánt ad ezért meg kell szorzoni 180/pi vel pi=3.14159265359
-  Angle_Roll = atan(Acc_Y / sqrt(Acc_X * Acc_X + Acc_Z * Acc_Z)) * (180.0 / PI);
-  Angle_Pitch = atan(-Acc_X / sqrt(Acc_Y * Acc_Y + Acc_Z * Acc_Z)) * (180.0 / PI);
+  //Angle_Roll = atan(Acc_Y / sqrt(Acc_X * Acc_X + Acc_Z * Acc_Z)) * (180.0 / PI);
+  //Angle_Pitch = atan(-Acc_X / sqrt(Acc_Y * Acc_Y + Acc_Z * Acc_Z)) * (180.0 / PI);
 }
 
 void Gyro_kalibracio(void) {
@@ -556,25 +604,25 @@ void PID_egyenlet(float Hiba, float P, float I, float D, float Elozo_Hiba, float
   else if (Iterm < -400) Iterm = -400;
 
   float Dterm = D * ((Hiba - Elozo_Hiba) / Ts);
-  float PID_Kimenet = Pterm + Iterm + Dterm;
+  float PID_eredmeny = Pterm + Iterm + Dterm;
 
-  if (PID_Kimenet > 400) PID_Kimenet = 400;
-  else if (PID_Kimenet < -400) PID_Kimenet = -400;
+  if (PID_eredmeny > 400) PID_eredmeny = 400;
+  else if (PID_eredmeny < -400) PID_eredmeny = -400;
 
-  PIDReturn[0] = PID_Kimenet;
-  PIDReturn[1] = Hiba;
-  PIDReturn[2] = Iterm;
+  PID_kimenetek[0] = PID_eredmeny;
+  PID_kimenetek[1] = Hiba;
+  PID_kimenetek[2] = Iterm;
 }
 
 void Reset_PID(void) {
   //Rate reset
-  Elozo_Hiba_Roll_Rate = 0;
-  Elozo_Hiba_Pitch_Rate = 0;
-  Elozo_Hiba_Yaw_Rate = 0;
+  Elozo_Hiba_Rate_Roll = 0;
+  Elozo_Hiba_Rate_Pitch = 0;
+  Elozo_Hiba_Rate_Yaw = 0;
 
-  Elozo_Iterm_Roll_Rate = 0;
-  Elozo_Iterm_Pitch_Rate = 0;
-  Elozo_Iterm_Yaw_Rate = 0;
+  Elozo_Iterm_Rate_Roll = 0;
+  Elozo_Iterm_Rate_Pitch = 0;
+  Elozo_Iterm_Rate_Yaw = 0;
 
   //Angle reset
   Elozo_Hiba_Angle_Roll = 0;
@@ -691,21 +739,39 @@ void setup() {
 
   Feszultseg = Feszultseg_Osszeg / 100.0f;
 
-  if (Feszultseg > 16.6) {                 // terhelés nélkűl mérjük az aksit így valós értéket kapunk mivel terhelés alatt beesik a feszülség szintje és nem lesz valós érték ezért terhlés alatt áramot mmérünk
-    digitalWrite(Piros_LED, LOW);          //piros led kikapcs
-    Aksi_kezdetben = Alap_aksi_kapacitas;  //felöltve tehát 1300mAh
-  } else if (Feszultseg < 15) {
-    digitalWrite(Piros_LED, HIGH);
-    Aksi_kezdetben = (float)30 / 100 * Alap_aksi_kapacitas;  //30% át vesszük
-  } else {
+  // A kezdeti töltöttséget álló motorok mellett mért feszültségből becsüljük.
+  if (Feszultseg >= 16.8f) {
+
     digitalWrite(Piros_LED, LOW);
-    Aksi_kezdetben = (41 * Feszultseg - 580) / 100 * Alap_aksi_kapacitas;
+    Aksi_kezdetben = Alap_aksi_kapacitas;  // A becslés felső korlátja: 2000 mAh.
+    Aksi_OK = true;
+
+  } else if (Feszultseg <= 14.0f) {
+
+    // Alacsony indulási feszültség: az indulást tiltjuk.
+    digitalWrite(Piros_LED, HIGH);
+    Aksi_kezdetben = 0.0f;
+    Aksi_OK = false;
+
+  } else {
+
+    // Közelítő lineáris becslés a 14–16,8 V tartományban.
+    Aksi_kezdetben = ((Feszultseg - 14.0f) / (16.8f - 14.0f)) * Alap_aksi_kapacitas;
+    Aksi_OK = true;
+
+    // Alacsony indulási feszültség jelzése.
+    if (Feszultseg <= 14.8f) {
+      digitalWrite(Piros_LED, HIGH);
+      Aksi_Alacsony = true;
+    } else {
+      digitalWrite(Piros_LED, LOW);
+    }
   }
 
   digitalWrite(Zold_LED, HIGH);
 
-  // kontrollálatlan motorindítás elkerülése Arm logika
-  while (Biztonsagos_inditas == 0) {
+  // kontrollálatlan motorindítás és alacsony aksi szintel történő repülés elkerülése
+  while (!Arm_engedelyezve || !Aksi_OK) {
 
     IBUS_Olvasas();
     IBUS_Failsafe_Ellenorzes();
@@ -715,37 +781,40 @@ void setup() {
     delay(4);
   }
 
-  Loop_Timer = micros();
-  Elozo_Loop_Kezdet = Loop_Timer;
+  Ciklus_Idozito = micros();
+  Elozo_Ciklus_Kezdet = Ciklus_Idozito;
 }
 
 void loop() {
 
   //Ciklus idő mérés
-  uint32_t Loop_Kezdet = micros();
+  uint32_t Ciklus_Kezdet = micros();
 
-  Ciklus_Ido = Loop_Kezdet - Elozo_Loop_Kezdet;
-  Elozo_Loop_Kezdet = Loop_Kezdet;
+  Ciklus_Ido = Ciklus_Kezdet - Elozo_Ciklus_Kezdet;
+  Elozo_Ciklus_Kezdet = Ciklus_Kezdet;
   //
 
-  //elentjük mindig a legnagyobb ciklus időt 4000-4049 nem gond 250Hz-246,98Hz
+  //elmentjük mindig a legnagyobb ciklus időt 4000-4049 nem gond 250Hz-246,98Hz
   if (Ciklus_Ido > Ciklus_Ido_Max) {
     Ciklus_Ido_Max = Ciklus_Ido;
   }
 
-  // Egyetlen legalább 4050 us-os ciklus után is villog 1Hzen resetig.
+  // A főciklusban kizárólag ez a blokk vezérli a piros LED-et.
   if (Ciklus_Ido_Max >= 4050) {
-    if (millis() - RED_BLINK >= 500) {
-      RED_BLINK = millis();
-      Red_LED_State = !Red_LED_State;
+    // Az időzítési hibajelzés elsőbbséget kap.
+    uint32_t Most = millis();
+
+    if (Most - Piros_villogas >= 500) {
+      Piros_villogas = Most;
+      Piros_LED_Allapot = !Piros_LED_Allapot;
     }
+
+    digitalWrite(Piros_LED, Piros_LED_Allapot ? HIGH : LOW);
+
   } else {
-    Red_LED_State = false;
+    // Időzítési hiba nélkül az akkumulátor állapotát jelezzük.
+    digitalWrite(Piros_LED, Aksi_Alacsony ? HIGH : LOW);
   }
-
-  digitalWrite(Piros_LED, Red_LED_State);
-
-  digitalWrite(LED_BUILTIN, EStop_LED);
 
   //Gyro adat olvasó fgv meghívása
   MPU_olvasas();
@@ -755,28 +824,48 @@ void loop() {
   Rate_Pitch -= Rate_Pitch_Offset;
   Rate_Yaw -= Rate_Yaw_Offset;
 
-  //elsőrendű exponenciális IIR aluláteresztő szűrés RATE MODE PID-hez hiba számoláshoz
-  Szurt_Roll_Rate = Szurt_Roll_Rate * 0.7 + Rate_Roll * 0.3;
-  Szurt_Pitch_Rate = Szurt_Pitch_Rate * 0.7 + Rate_Pitch * 0.3;
-  Szurt_Yaw_Rate = Szurt_Yaw_Rate * 0.7 + Rate_Yaw * 0.3;
+  //Ezt most nem használom
+  /*Szurt_Rate_Roll = Szurt_Rate_Roll * 0.7 + Rate_Roll * 0.3;
+  Szurt_Rate_Pitch = Szurt_Rate_Pitch * 0.7 + Rate_Pitch * 0.3;
+  Szurt_Rate_Yaw = Szurt_Rate_Yaw * 0.7 + Rate_Yaw * 0.3;*/
 
   //Kalman Angle Roll számítás
-  kalman_1d(Kalman_Angle_Roll, Kalman_Bizonytalansag_Angle_Roll, Rate_Roll, Angle_Roll);
-  Kalman_Angle_Roll = Kalman_1D_kimenet[0];
-  Kalman_Bizonytalansag_Angle_Roll = Kalman_1D_kimenet[1];
+  Kalman_Szog(Kalman_Angle_Roll, Kalman_Bizonytalansag_Angle_Roll, Rate_Roll, Angle_Roll);
+  Kalman_Angle_Roll = Kalman_Szog_Kimenet[0];
+  Kalman_Bizonytalansag_Angle_Roll = Kalman_Szog_Kimenet[1];
 
   //Kalman Angle Pitch számítás
-  kalman_1d(Kalman_Angle_Pitch, Kalman_Bizonytalansag_Angle_Pitch, Rate_Pitch, Angle_Pitch);
-  Kalman_Angle_Pitch = Kalman_1D_kimenet[0];
-  Kalman_Bizonytalansag_Angle_Pitch = Kalman_1D_kimenet[1];
+  Kalman_Szog(Kalman_Angle_Pitch, Kalman_Bizonytalansag_Angle_Pitch, Rate_Pitch, Angle_Pitch);
+  Kalman_Angle_Pitch = Kalman_Szog_Kimenet[0];
+  Kalman_Bizonytalansag_Angle_Pitch = Kalman_Szog_Kimenet[1];
 
-  //Az inerciális Z tengely irányába eső gyorsulás kiszámítása
-  Acc_Z_gyorsulas = -sin(Kalman_Angle_Pitch * (PI / 180)) * Acc_X + cos(Kalman_Angle_Pitch * (PI / 180)) * sin(Kalman_Angle_Roll * (PI / 180)) * Acc_Y + cos(Kalman_Angle_Pitch * (PI / 180)) * cos(Kalman_Angle_Roll * (PI / 180)) * Acc_Z;
-  //gyorsulás átváltása cm/s^2-re
-  Acc_Z_gyorsulas = (Acc_Z_gyorsulas - 1) * 9.81 * 100;
+  // Dőlésszögek átváltása radiánba
+  float Roll_rad = Kalman_Angle_Roll * (PI / 180);
+  float Pitch_rad = Kalman_Angle_Pitch * (PI / 180);
 
-  if (BMP_adat_olvasas()) {
-    Baro_magassag -= Baro_magassag_kezdetben;
+  // Trigonometrikus értékek
+  float Sin_Roll = sinf(Roll_rad);
+  float Cos_Roll = cosf(Roll_rad);
+  float Sin_Pitch = sinf(Pitch_rad);
+  float Cos_Pitch = cosf(Pitch_rad);
+
+  // Gyorsulás függőleges irányú komponense [g]
+  float Acc_Z_inercialis = -Sin_Pitch * Acc_X + Cos_Pitch * Sin_Roll * Acc_Y + Cos_Pitch * Cos_Roll * Acc_Z;
+
+  // Gravitáció kompenzálása, átváltás cm/s²-re
+  Acc_Z_gyorsulas = (Acc_Z_inercialis - 1.0f) * 981.0f;  // * 9.81 * 100
+
+  Baro_frissites = false;
+
+  uint32_t Most_us = micros();
+
+  if ((uint32_t)(Most_us - BMP_meres) >= 40000UL) {
+    BMP_meres = Most_us;
+
+    if (BMP_adat_olvasas()) {
+      Baro_magassag -= Baro_magassag_kezdetben;
+      Baro_frissites = true;
+    }
   }
 
   kalman_2d();
@@ -784,10 +873,15 @@ void loop() {
   IBUS_Olvasas();
   IBUS_Failsafe_Ellenorzes();
 
-  if (Failsafe || Biztonsagos_inditas == 0) {
+  // Biztonsági leállítás és LED állapota
+  bool Leallitas = Failsafe || !Arm_engedelyezve || EStop_Allapot;
+
+  EStop_LED = Leallitas;
+  digitalWrite(LED_BUILTIN, EStop_LED);
+
+  if (Leallitas) {
     Iterm_Aktiv = false;
-    EStop_LED = true;
-    Biztonsagos_inditas = 0;
+    Arm_engedelyezve = false;
 
     Motor_1_bemenet = Motorok_leallitas;
     Motor_2_bemenet = Motorok_leallitas;
@@ -803,37 +897,11 @@ void loop() {
 
     Arm_Ellenorzes();
 
-    while (micros() - Loop_Timer < 4000)
+    while (micros() - Ciklus_Idozito < 4000)
       ;
-    Loop_Timer = micros();
+    Ciklus_Idozito = micros();
     return;
   }
-
-  if (EStop_Allapot) {
-    EStop_LED = true;
-    Iterm_Aktiv = false;
-    Biztonsagos_inditas = 0;
-
-    Motor_1_bemenet = Motorok_leallitas;
-    Motor_2_bemenet = Motorok_leallitas;
-    Motor_3_bemenet = Motorok_leallitas;
-    Motor_4_bemenet = Motorok_leallitas;
-
-    ledcWrite(Motor_1_ESC_Csatorna, usToDuty(Motor_1_bemenet));
-    ledcWrite(Motor_2_ESC_Csatorna, usToDuty(Motor_2_bemenet));
-    ledcWrite(Motor_3_ESC_Csatorna, usToDuty(Motor_3_bemenet));
-    ledcWrite(Motor_4_ESC_Csatorna, usToDuty(Motor_4_bemenet));
-
-    Reset_PID();
-
-    while (micros() - Loop_Timer < 4000)
-      ;
-
-    Loop_Timer = micros();
-    return;
-  }
-
-  EStop_LED = false;
 
   //RATE -> ANGLE módváltás érzékelése
   if (Angle_Mode_Aktiv && !Elozo_Angle_Mode_Aktiv) {
@@ -842,25 +910,6 @@ void loop() {
   // Aktuális állapot eltárolása következő ciklusra
   Elozo_Angle_Mode_Aktiv = Angle_Mode_Aktiv;
 
-  if (Angle_Mode_Aktiv) {
-    // ANGLE MÓD
-    Kivant_Angle_Roll = 0.10 * RC_Deadband(Vevo_Ertekek[0]);
-    Kivant_Angle_Pitch = 0.10 * RC_Deadband(Vevo_Ertekek[1]);
-  } else {
-    // RATE MÓD
-    Kivant_Roll_Rate = 0.15 * RC_Deadband(Vevo_Ertekek[0]);
-    Kivant_Pitch_Rate = 0.15 * RC_Deadband(Vevo_Ertekek[1]);
-  }
-
-  // VELOCITY MÓD
-  if (Velocity_Mode_Aktiv) {
-    Kivant_Fuggoleges_sebesseg = 0.3 * (Vevo_Ertekek[2] - 1500);
-  } else {
-    // SIMA GÁZ PARANCS
-    Bemenet_Gaz = Vevo_Ertekek[2];
-  }
-  // YAW PARANCS
-  Kivant_Yaw_Rate = 0.15 * RC_Deadband(Vevo_Ertekek[3]);
 
   //Felszállás elött Iterm gyűlődésének elkerülése
   if (Vevo_Ertekek[2] > 1130) Iterm_Aktiv = true;
@@ -878,78 +927,82 @@ void loop() {
 
   //Velocity PID
   if (Velocity_Mode_Aktiv) {
+    Kivant_Fuggoleges_sebesseg = 0.3 * (Vevo_Ertekek[2] - 1500);
     Hiba_Fuggoleges_sebesseg = Kivant_Fuggoleges_sebesseg - Kalman_Fuggoleges_sebesseg;
 
     PID_egyenlet(Hiba_Fuggoleges_sebesseg, P_Fuggoleges_sebesseg, I_Fuggoleges_sebesseg_Aktiv, D_Fuggoleges_sebesseg, Elozo_Hiba_Fuggoleges_sebesseg, Elozo_Iterm_Fuggoleges_sebesseg);
-    Bemenet_Gaz = 1500 + PIDReturn[0];  //Mivel a nulla sebességhez, tehát a lebegéshez tartozó pont várhatóan a gázkar középállása körül lesz — 1500 µs-nál —, ezt az értéket add hozzá a PID kimenetéhez.
-    Elozo_Hiba_Fuggoleges_sebesseg = PIDReturn[1];
-    Elozo_Iterm_Fuggoleges_sebesseg = PIDReturn[2];
+    Bemenet_Gaz = 1500 + PID_kimenetek[0];  //Mivel a nulla sebességhez, tehát a lebegéshez tartozó pont várhatóan a gázkar középállása körül lesz — 1500 µs-nál —, ezt az értéket add hozzá a PID kimenetéhez.
+    Elozo_Hiba_Fuggoleges_sebesseg = PID_kimenetek[1];
+    Elozo_Iterm_Fuggoleges_sebesseg = PID_kimenetek[2];
+  } else {
+    Bemenet_Gaz = Vevo_Ertekek[2];
   }
 
   //ANGLE PID
   if (Angle_Mode_Aktiv) {
+    Kivant_Angle_Roll = 0.10 * RC_Deadband(Vevo_Ertekek[0]);
+    Kivant_Angle_Pitch = 0.10 * RC_Deadband(Vevo_Ertekek[1]);
     //Számítsd ki a különbséget a kívánt és a tényleges roll és pitch szögek között.
     Hiba_Angle_Roll = Kivant_Angle_Roll - Kalman_Angle_Roll;
     Hiba_Angle_Pitch = Kivant_Angle_Pitch - Kalman_Angle_Pitch;
 
     //PID Angle Roll
     PID_egyenlet(Hiba_Angle_Roll, P_Angle_Roll, I_Angle_Roll_Aktiv, D_Angle_Roll, Elozo_Hiba_Angle_Roll, Elozo_Iterm_Angle_Roll);
-    Kivant_Roll_Rate = PIDReturn[0];
-    Kivant_Roll_Rate = constrain(Kivant_Roll_Rate, -220, 220);
-    Elozo_Hiba_Angle_Roll = PIDReturn[1];
-    Elozo_Iterm_Angle_Roll = PIDReturn[2];
+    Kivant_Rate_Roll = PID_kimenetek[0];
+    Kivant_Rate_Roll = constrain(Kivant_Rate_Roll, -220, 220);
+    Elozo_Hiba_Angle_Roll = PID_kimenetek[1];
+    Elozo_Iterm_Angle_Roll = PID_kimenetek[2];
 
     //PID Angle Pitch
     PID_egyenlet(Hiba_Angle_Pitch, P_Angle_Pitch, I_Angle_Pitch_Aktiv, D_Angle_Pitch, Elozo_Hiba_Angle_Pitch, Elozo_Iterm_Angle_Pitch);
-    Kivant_Pitch_Rate = PIDReturn[0];
-    Kivant_Pitch_Rate = constrain(Kivant_Pitch_Rate, -220, 220);
-    Elozo_Hiba_Angle_Pitch = PIDReturn[1];
-    Elozo_Iterm_Angle_Pitch = PIDReturn[2];
+    Kivant_Rate_Pitch = PID_kimenetek[0];
+    Kivant_Rate_Pitch = constrain(Kivant_Rate_Pitch, -220, 220);
+    Elozo_Hiba_Angle_Pitch = PID_kimenetek[1];
+    Elozo_Iterm_Angle_Pitch = PID_kimenetek[2];
+  } else {
+    Kivant_Rate_Roll = 0.15 * RC_Deadband(Vevo_Ertekek[0]);
+    Kivant_Rate_Pitch = 0.15 * RC_Deadband(Vevo_Ertekek[1]);
   }
 
-  Hiba_Roll_Rate = Kivant_Roll_Rate - Szurt_Roll_Rate;
-  Hiba_Pitch_Rate = Kivant_Pitch_Rate - Szurt_Pitch_Rate;
-  Hiba_Yaw_Rate = Kivant_Yaw_Rate - Szurt_Yaw_Rate;
+  // YAW PARANCS
+  Kivant_Rate_Yaw = 0.15 * RC_Deadband(Vevo_Ertekek[3]);
+
+  //Hiba_Rate_Roll = Kivant_Rate_Roll - Szurt_Rate_Roll;
+  //Hiba_Rate_Pitch = Kivant_Rate_Pitch - Szurt_Rate_Pitch;
+  //Hiba_Rate_Yaw = Kivant_Rate_Yaw - Szurt_Rate_Yaw;
+
+  Hiba_Rate_Roll = Kivant_Rate_Roll - Rate_Roll;
+  Hiba_Rate_Pitch = Kivant_Rate_Pitch - Rate_Pitch;
+  Hiba_Rate_Yaw = Kivant_Rate_Yaw - Rate_Yaw;
 
   // PID Rate Roll
-  PID_egyenlet(Hiba_Roll_Rate, P_Rate_Roll, I_Rate_Roll_Aktiv, D_Rate_Roll, Elozo_Hiba_Roll_Rate, Elozo_Iterm_Roll_Rate);
-  Bemenet_Roll = PIDReturn[0];
-  Elozo_Hiba_Roll_Rate = PIDReturn[1];
-  Elozo_Iterm_Roll_Rate = PIDReturn[2];
+  PID_egyenlet(Hiba_Rate_Roll, P_Rate_Roll, I_Rate_Roll_Aktiv, D_Rate_Roll, Elozo_Hiba_Rate_Roll, Elozo_Iterm_Rate_Roll);
+  Bemenet_Roll = PID_kimenetek[0];
+  Elozo_Hiba_Rate_Roll = PID_kimenetek[1];
+  Elozo_Iterm_Rate_Roll = PID_kimenetek[2];
 
   //PID Rate Pitch
-  PID_egyenlet(Hiba_Pitch_Rate, P_Rate_Pitch, I_Rate_Pitch_Aktiv, D_Rate_Pitch, Elozo_Hiba_Pitch_Rate, Elozo_Iterm_Pitch_Rate);
-  Bemenet_Pitch = PIDReturn[0];
-  Elozo_Hiba_Pitch_Rate = PIDReturn[1];
-  Elozo_Iterm_Pitch_Rate = PIDReturn[2];
+  PID_egyenlet(Hiba_Rate_Pitch, P_Rate_Pitch, I_Rate_Pitch_Aktiv, D_Rate_Pitch, Elozo_Hiba_Rate_Pitch, Elozo_Iterm_Rate_Pitch);
+  Bemenet_Pitch = PID_kimenetek[0];
+  Elozo_Hiba_Rate_Pitch = PID_kimenetek[1];
+  Elozo_Iterm_Rate_Pitch = PID_kimenetek[2];
 
   //PID Rate Yaw
-  PID_egyenlet(Hiba_Yaw_Rate, P_Rate_Yaw, I_Rate_Yaw_Aktiv, D_Rate_Yaw, Elozo_Hiba_Yaw_Rate, Elozo_Iterm_Yaw_Rate);
-  Bemenet_Yaw = PIDReturn[0];
-  Elozo_Hiba_Yaw_Rate = PIDReturn[1];
-  Elozo_Iterm_Yaw_Rate = PIDReturn[2];
+  PID_egyenlet(Hiba_Rate_Yaw, P_Rate_Yaw, I_Rate_Yaw_Aktiv, D_Rate_Yaw, Elozo_Hiba_Rate_Yaw, Elozo_Iterm_Rate_Yaw);
+  Bemenet_Yaw = PID_kimenetek[0];
+  Elozo_Hiba_Rate_Yaw = PID_kimenetek[1];
+  Elozo_Iterm_Rate_Yaw = PID_kimenetek[2];
 
   //PID-nek hagyni korrekciós lehetőséget
   if (Bemenet_Gaz > 1800) Bemenet_Gaz = 1800;
 
-  //250Hz 12 bit felbontás
-  Motor_1_bemenet = (Bemenet_Gaz - Bemenet_Roll + Bemenet_Pitch + Bemenet_Yaw);  // 100 %
-  Motor_2_bemenet = (Bemenet_Gaz - Bemenet_Roll - Bemenet_Pitch - Bemenet_Yaw);  //   0 %
-  Motor_3_bemenet = (Bemenet_Gaz + Bemenet_Roll + Bemenet_Pitch - Bemenet_Yaw);  // 100 %
-  Motor_4_bemenet = (Bemenet_Gaz + Bemenet_Roll - Bemenet_Pitch + Bemenet_Yaw);  // 100 %
+  // Motorkeverés és motorvezérlő jelek korlátozása
+  Motor_1_bemenet = constrain(Bemenet_Gaz - Bemenet_Roll + Bemenet_Pitch + Bemenet_Yaw, Motorok_alapjarat, Motorok_max);
+  Motor_2_bemenet = constrain(Bemenet_Gaz - Bemenet_Roll - Bemenet_Pitch - Bemenet_Yaw, Motorok_alapjarat, Motorok_max);
+  Motor_3_bemenet = constrain(Bemenet_Gaz + Bemenet_Roll + Bemenet_Pitch - Bemenet_Yaw, Motorok_alapjarat, Motorok_max);
+  Motor_4_bemenet = constrain(Bemenet_Gaz + Bemenet_Roll - Bemenet_Pitch + Bemenet_Yaw, Motorok_alapjarat, Motorok_max);
 
-  if (Motor_1_bemenet > 2000) Motor_1_bemenet = 2000;
-  if (Motor_2_bemenet > 2000) Motor_2_bemenet = 2000;
-  if (Motor_3_bemenet > 2000) Motor_3_bemenet = 2000;
-  if (Motor_4_bemenet > 2000) Motor_4_bemenet = 2000;
-
-  //18%-os alapjárat a motoroknak
-  if (Motor_1_bemenet < Motorok_alapjarat) Motor_1_bemenet = Motorok_alapjarat;
-  if (Motor_2_bemenet < Motorok_alapjarat) Motor_2_bemenet = Motorok_alapjarat;
-  if (Motor_3_bemenet < Motorok_alapjarat) Motor_3_bemenet = Motorok_alapjarat;
-  if (Motor_4_bemenet < Motorok_alapjarat) Motor_4_bemenet = Motorok_alapjarat;
-
-  //ha leszállni szeretnénk
+  //ha leszállni szeretnék
   if (Vevo_Ertekek[2] < 1030) {
     Iterm_Aktiv = false;
     Motor_1_bemenet = Motorok_leallitas;
@@ -970,14 +1023,15 @@ void loop() {
     Aksi_meres = millis();
     ADC_meres();
 
-    Elfogyasztott_kapacitas = Aram * 1000 * 0.1 / 3600 + Elfogyasztott_kapacitas;
-    Aksi_maradek = (Aksi_kezdetben - Elfogyasztott_kapacitas) / Alap_aksi_kapacitas * 100;
+    Elfogyasztott_kapacitas = Aram * 1000 * 0.1 / 3600 + Elfogyasztott_kapacitas;           // mAh ban
+    Aksi_maradek = (Aksi_kezdetben - Elfogyasztott_kapacitas) / Alap_aksi_kapacitas * 100;  // %-ban
 
-    if (Aksi_maradek <= 30) digitalWrite(Piros_LED, HIGH);
-    else digitalWrite(Piros_LED, LOW);
+    Aksi_maradek = constrain(Aksi_maradek, 0.0f, 100.0f);
+    Aksi_Alacsony = (Aksi_maradek <= 30.0f);
   }
 
-  while (micros() - Loop_Timer < 4000)
+  //250 Hz, 4ms ciklus biztosítása
+  while (micros() - Ciklus_Idozito < 4000)
     ;
-  Loop_Timer = micros();
+  Ciklus_Idozito = micros();
 }

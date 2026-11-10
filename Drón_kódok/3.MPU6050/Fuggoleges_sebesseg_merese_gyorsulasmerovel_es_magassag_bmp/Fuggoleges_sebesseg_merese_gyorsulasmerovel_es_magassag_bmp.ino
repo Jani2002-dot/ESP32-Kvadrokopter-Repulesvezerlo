@@ -159,7 +159,6 @@ void Gyro_kalibracio(void) {
   Rate_Yaw_Offset /= (float)2500;
 }
 
-
 bool BMP_adat_olvasas(void) {
 
   Wire.beginTransmission(0x77);
@@ -247,7 +246,6 @@ bool BMP_adat_olvasas(void) {
 
   return true;
 }
-
 
 void BMP_regiszterek_beallitasa(void) {
 

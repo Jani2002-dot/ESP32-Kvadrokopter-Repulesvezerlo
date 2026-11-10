@@ -47,7 +47,7 @@ bool EStop_Allapot = false;
 bool Angle_Mode_Aktiv = false;
 bool Elozo_Angle_Mode_Aktiv = false;
 bool EStop_LED = false;
-bool Biztonsagos_inditas = false;
+bool Arm_engedelyezve = false;
 uint32_t Arm_Tartas_Kezdete = 0;
 bool Arm_Tartas_Folyamatban = false;
 #pragma endregion
@@ -55,17 +55,17 @@ bool Arm_Tartas_Folyamatban = false;
 #pragma region 04_Rate_adatok
 //számított szögsebességeknek változó
 float Rate_Roll, Rate_Pitch, Rate_Yaw;
-float Szurt_Roll_Rate, Szurt_Pitch_Rate, Szurt_Yaw_Rate;
+float Szurt_Rate_Roll, Szurt_Rate_Pitch, Szurt_Rate_Yaw;
 
 //2500 mintavételt ezekhez adjuk hozzá
 float Rate_Roll_Offset = 0;
 float Rate_Pitch_Offset = 0;
 float Rate_Yaw_Offset = 0;
 
-float Kivant_Roll_Rate, Kivant_Pitch_Rate, Kivant_Yaw_Rate;
-float Hiba_Roll_Rate, Hiba_Pitch_Rate, Hiba_Yaw_Rate;
-float Elozo_Hiba_Roll_Rate, Elozo_Hiba_Pitch_Rate, Elozo_Hiba_Yaw_Rate;
-float Elozo_Iterm_Roll_Rate, Elozo_Iterm_Pitch_Rate, Elozo_Iterm_Yaw_Rate;
+float Kivant_Rate_Roll, Kivant_Rate_Pitch, Kivant_Rate_Yaw;
+float Hiba_Rate_Roll, Hiba_Rate_Pitch, Hiba_Rate_Yaw;
+float Elozo_Hiba_Rate_Roll, Elozo_Hiba_Rate_Pitch, Elozo_Hiba_Rate_Yaw;
+float Elozo_Iterm_Rate_Roll, Elozo_Iterm_Rate_Pitch, Elozo_Iterm_Rate_Yaw;
 #pragma endregion
 
 #pragma region 05_Angle_adatok
@@ -111,11 +111,12 @@ float I_Angle_Roll = 1.115, I_Angle_Pitch = I_Angle_Roll;
 float D_Angle_Roll = 0, D_Angle_Pitch = D_Angle_Roll;
 #pragma endregion
 
-#pragma region 07_Motorvaltozok_es_Loop_valtozok
+#pragma region 07_Motorvaltozok_es_Ciklus_valtozok
 float Motor_1_bemenet, Motor_2_bemenet, Motor_3_bemenet, Motor_4_bemenet;
 float Bemenet_Roll, Bemenet_Pitch, Bemenet_Yaw, Bemenet_Gaz;
 int Motorok_alapjarat = 1180;
 int Motorok_leallitas = 1000;
+int Motorok_max = 2000;
 
 // 250 Hz-es loop vizsgálatához
 uint32_t Ciklus_Idozito;
@@ -153,7 +154,7 @@ void Kalman_Szog(float x, float P, float u, float z) {
 
 void ADC_meres(void) {
   Feszultseg = analogReadMilliVolts(feszultseg_meres_PIN) / 1000.0f * 6.0f;  // Feszültség [V]
-  Aram = analogReadMilliVolts(aram_meres_PIN) / 30.0f;                       // Áram [A] (30mV / A)
+  Aram = analogReadMilliVolts(aram_meres_PIN) / 15.0f;                       // Áram [A] (30mV / A)
 }
 
 void IBUS_Olvasas(void) {
@@ -285,7 +286,7 @@ void Arm_Ellenorzes(void) {
 
   // 1 mp-ig tartani kell arm feltételeket
   if (Most - Arm_Tartas_Kezdete >= 1000) {
-    Biztonsagos_inditas = true;
+    Arm_engedelyezve = true;
     Arm_Tartas_Folyamatban = false;
     Ciklus_Ido_Max = 0;
   }
@@ -354,10 +355,13 @@ void MPU_olvasas(void) {
 
   //Szögek kiszámítása árkusz tangens fgv-el de  az Arduinoba Radiánt ad ezért meg kell szorzoni 180/pi vel pi=3.14159265359
 
-  float a_norm = sqrt(Acc_X * Acc_X + Acc_Y * Acc_Y + Acc_Z * Acc_Z);
+  // Gyorsulásvektor nagysága [g]
+  float a_norm = sqrtf(Acc_X * Acc_X + Acc_Y * Acc_Y + Acc_Z * Acc_Z);
 
-  Angle_Roll = asin(Acc_Y / a_norm) * (180.0 / PI);
-  Angle_Pitch = asin(-Acc_X / a_norm) * (180.0 / PI);
+  if (a_norm > 0.0001f) {
+    Angle_Roll = asinf(Acc_Y / a_norm) * (180.0f / PI);
+    Angle_Pitch = asinf(-Acc_X / a_norm) * (180.0f / PI);
+  }
 
   //Angle_Roll = atan(Acc_Y / sqrt(Acc_X * Acc_X + Acc_Z * Acc_Z)) * (180.0 / PI);
   //Angle_Pitch = atan(-Acc_X / sqrt(Acc_Y * Acc_Y + Acc_Z * Acc_Z)) * (180.0 / PI);
@@ -400,13 +404,13 @@ void PID_egyenlet(float Hiba, float P, float I, float D, float Elozo_Hiba, float
 
 void Reset_PID(void) {
   //Rate reset
-  Elozo_Hiba_Roll_Rate = 0;
-  Elozo_Hiba_Pitch_Rate = 0;
-  Elozo_Hiba_Yaw_Rate = 0;
+  Elozo_Hiba_Rate_Roll = 0;
+  Elozo_Hiba_Rate_Pitch = 0;
+  Elozo_Hiba_Rate_Yaw = 0;
 
-  Elozo_Iterm_Roll_Rate = 0;
-  Elozo_Iterm_Pitch_Rate = 0;
-  Elozo_Iterm_Yaw_Rate = 0;
+  Elozo_Iterm_Rate_Roll = 0;
+  Elozo_Iterm_Rate_Pitch = 0;
+  Elozo_Iterm_Rate_Yaw = 0;
 
   //Angle reset
   Elozo_Hiba_Angle_Roll = 0;
@@ -535,7 +539,7 @@ void setup() {
   digitalWrite(Zold_LED, HIGH);
 
   // kontrollálatlan motorindítás és alacsony aksi szintel történő repülés elkerülése
-  while (!Biztonsagos_inditas || !Aksi_OK) {
+  while (!Arm_engedelyezve || !Aksi_OK) {
 
     IBUS_Olvasas();
     IBUS_Failsafe_Ellenorzes();
@@ -580,9 +584,6 @@ void loop() {
     digitalWrite(Piros_LED, Aksi_Alacsony ? HIGH : LOW);
   }
 
-  //Leállás jelzése
-  digitalWrite(LED_BUILTIN, EStop_LED);
-
   //MPU 6050 olvasó fgv meghívása
   MPU_olvasas();
 
@@ -591,10 +592,11 @@ void loop() {
   Rate_Pitch -= Rate_Pitch_Offset;
   Rate_Yaw -= Rate_Yaw_Offset;
 
-  //elsőrendű exponenciális IIR aluláteresztő szűrés RATE MODE PID-hez hiba számoláshoz
-  Szurt_Roll_Rate = Szurt_Roll_Rate * 0.7 + Rate_Roll * 0.3;
-  Szurt_Pitch_Rate = Szurt_Pitch_Rate * 0.7 + Rate_Pitch * 0.3;
-  Szurt_Yaw_Rate = Szurt_Yaw_Rate * 0.7 + Rate_Yaw * 0.3;
+  /*//elsőrendű exponenciális IIR aluláteresztő szűrés RATE MODE PID-hez hiba számoláshoz
+  Ez most nincs használtban
+  Szurt_Rate_Roll = Szurt_Rate_Roll * 0.7 + Rate_Roll * 0.3;
+  Szurt_Rate_Pitch = Szurt_Rate_Pitch * 0.7 + Rate_Pitch * 0.3;
+  Szurt_Rate_Yaw = Szurt_Rate_Yaw * 0.7 + Rate_Yaw * 0.3;*/
 
   //Kalman Angle Roll számítás
   Kalman_Szog(Kalman_Angle_Roll, Kalman_Bizonytalansag_Angle_Roll, Rate_Roll, Angle_Roll);
@@ -609,10 +611,16 @@ void loop() {
   IBUS_Olvasas();
   IBUS_Failsafe_Ellenorzes();
 
-  if (Failsafe || !Biztonsagos_inditas) {
+  // Biztonsági leállítás és LED állapota
+  bool Leallitas = Failsafe || !Arm_engedelyezve || EStop_Allapot;
+
+  EStop_LED = Leallitas;
+  digitalWrite(LED_BUILTIN, EStop_LED);
+
+  if (Leallitas) {
     Iterm_Aktiv = false;
     EStop_LED = true;
-    Biztonsagos_inditas = false;
+    Arm_engedelyezve = false;
 
     Motor_1_bemenet = Motorok_leallitas;
     Motor_2_bemenet = Motorok_leallitas;
@@ -634,30 +642,6 @@ void loop() {
     return;
   }
 
-  if (EStop_Allapot) {
-    EStop_LED = true;
-    Iterm_Aktiv = false;
-    Biztonsagos_inditas = false;
-
-    Motor_1_bemenet = Motorok_leallitas;
-    Motor_2_bemenet = Motorok_leallitas;
-    Motor_3_bemenet = Motorok_leallitas;
-    Motor_4_bemenet = Motorok_leallitas;
-
-    ledcWrite(Motor_1_ESC_Csatorna, usToDuty(Motor_1_bemenet));
-    ledcWrite(Motor_2_ESC_Csatorna, usToDuty(Motor_2_bemenet));
-    ledcWrite(Motor_3_ESC_Csatorna, usToDuty(Motor_3_bemenet));
-    ledcWrite(Motor_4_ESC_Csatorna, usToDuty(Motor_4_bemenet));
-
-    Reset_PID();
-
-    while (micros() - Ciklus_Idozito < 4000)
-      ;
-
-    Ciklus_Idozito = micros();
-    return;
-  }
-
   EStop_LED = false;
 
   //RATE -> ANGLE módváltás érzékelése
@@ -666,19 +650,6 @@ void loop() {
   }
   // Aktuális állapot eltárolása következő ciklusra
   Elozo_Angle_Mode_Aktiv = Angle_Mode_Aktiv;
-
-  if (Angle_Mode_Aktiv) {
-    // ANGLE MÓD
-    Kivant_Angle_Roll = 0.10 * RC_Holtsav(Vevo_Ertekek[0]);
-    Kivant_Angle_Pitch = 0.10 * RC_Holtsav(Vevo_Ertekek[1]);
-  } else {
-    // RATE MÓD
-    Kivant_Roll_Rate = 0.15 * RC_Holtsav(Vevo_Ertekek[0]);
-    Kivant_Pitch_Rate = 0.15 * RC_Holtsav(Vevo_Ertekek[1]);
-  }
-
-  Bemenet_Gaz = Vevo_Ertekek[2];                         // SIMA GÁZ PARANCS
-  Kivant_Yaw_Rate = 0.15 * RC_Holtsav(Vevo_Ertekek[3]);  // YAW PARANCS
 
   //Felszállás elött Iterm gyűlődésének elkerülése
   if (Vevo_Ertekek[2] > 1130) Iterm_Aktiv = true;
@@ -694,66 +665,68 @@ void loop() {
 
   //ANGLE PID
   if (Angle_Mode_Aktiv) {
+    Kivant_Angle_Roll = 0.10 * RC_Holtsav(Vevo_Ertekek[0]);
+    Kivant_Angle_Pitch = 0.10 * RC_Holtsav(Vevo_Ertekek[1]);
     //Számítsd ki a különbséget a kívánt és a tényleges roll és pitch szögek között.
     Hiba_Angle_Roll = Kivant_Angle_Roll - Kalman_Angle_Roll;
     Hiba_Angle_Pitch = Kivant_Angle_Pitch - Kalman_Angle_Pitch;
 
     //PID Angle Roll
     PID_egyenlet(Hiba_Angle_Roll, P_Angle_Roll, I_Angle_Roll_Aktiv, D_Angle_Roll, Elozo_Hiba_Angle_Roll, Elozo_Iterm_Angle_Roll);
-    Kivant_Roll_Rate = PIDReturn[0];
-    Kivant_Roll_Rate = constrain(Kivant_Roll_Rate, -220, 220);
+    Kivant_Rate_Roll = PIDReturn[0];
+    Kivant_Rate_Roll = constrain(Kivant_Rate_Roll, -220, 220);
     Elozo_Hiba_Angle_Roll = PIDReturn[1];
     Elozo_Iterm_Angle_Roll = PIDReturn[2];
 
     //PID Angle Pitch
     PID_egyenlet(Hiba_Angle_Pitch, P_Angle_Pitch, I_Angle_Pitch_Aktiv, D_Angle_Pitch, Elozo_Hiba_Angle_Pitch, Elozo_Iterm_Angle_Pitch);
-    Kivant_Pitch_Rate = PIDReturn[0];
-    Kivant_Pitch_Rate = constrain(Kivant_Pitch_Rate, -220, 220);
+    Kivant_Rate_Pitch = PIDReturn[0];
+    Kivant_Rate_Pitch = constrain(Kivant_Rate_Pitch, -220, 220);
     Elozo_Hiba_Angle_Pitch = PIDReturn[1];
     Elozo_Iterm_Angle_Pitch = PIDReturn[2];
+  } else {
+    // RATE MÓD
+    Kivant_Rate_Roll = 0.15 * RC_Holtsav(Vevo_Ertekek[0]);
+    Kivant_Rate_Pitch = 0.15 * RC_Holtsav(Vevo_Ertekek[1]);
   }
 
-  Hiba_Roll_Rate = Kivant_Roll_Rate - Szurt_Roll_Rate;
-  Hiba_Pitch_Rate = Kivant_Pitch_Rate - Szurt_Pitch_Rate;
-  Hiba_Yaw_Rate = Kivant_Yaw_Rate - Szurt_Yaw_Rate;
+  Bemenet_Gaz = Vevo_Ertekek[2];                         // SIMA GÁZ PARANCS
+  Kivant_Rate_Yaw = 0.15 * RC_Holtsav(Vevo_Ertekek[3]);  // YAW PARANCS
+
+  //Hiba_Rate_Roll = Kivant_Rate_Roll - Szurt_Rate_Roll;
+  //Hiba_Rate_Pitch = Kivant_Rate_Pitch - Szurt_Rate_Pitch;
+  //Hiba_Rate_Yaw = Kivant_Rate_Yaw - Szurt_Rate_Yaw;
+
+  Hiba_Rate_Roll = Kivant_Rate_Roll - Rate_Roll;
+  Hiba_Rate_Pitch = Kivant_Rate_Pitch - Rate_Pitch;
+  Hiba_Rate_Yaw = Kivant_Rate_Yaw - Rate_Yaw;
 
   // PID Rate Roll
-  PID_egyenlet(Hiba_Roll_Rate, P_Rate_Roll, I_Rate_Roll_Aktiv, D_Rate_Roll, Elozo_Hiba_Roll_Rate, Elozo_Iterm_Roll_Rate);
+  PID_egyenlet(Hiba_Rate_Roll, P_Rate_Roll, I_Rate_Roll_Aktiv, D_Rate_Roll, Elozo_Hiba_Rate_Roll, Elozo_Iterm_Rate_Roll);
   Bemenet_Roll = PIDReturn[0];
-  Elozo_Hiba_Roll_Rate = PIDReturn[1];
-  Elozo_Iterm_Roll_Rate = PIDReturn[2];
+  Elozo_Hiba_Rate_Roll = PIDReturn[1];
+  Elozo_Iterm_Rate_Roll = PIDReturn[2];
 
   //PID Rate Pitch
-  PID_egyenlet(Hiba_Pitch_Rate, P_Rate_Pitch, I_Rate_Pitch_Aktiv, D_Rate_Pitch, Elozo_Hiba_Pitch_Rate, Elozo_Iterm_Pitch_Rate);
+  PID_egyenlet(Hiba_Rate_Pitch, P_Rate_Pitch, I_Rate_Pitch_Aktiv, D_Rate_Pitch, Elozo_Hiba_Rate_Pitch, Elozo_Iterm_Rate_Pitch);
   Bemenet_Pitch = PIDReturn[0];
-  Elozo_Hiba_Pitch_Rate = PIDReturn[1];
-  Elozo_Iterm_Pitch_Rate = PIDReturn[2];
+  Elozo_Hiba_Rate_Pitch = PIDReturn[1];
+  Elozo_Iterm_Rate_Pitch = PIDReturn[2];
 
   //PID Rate Yaw
-  PID_egyenlet(Hiba_Yaw_Rate, P_Rate_Yaw, I_Rate_Yaw_Aktiv, D_Rate_Yaw, Elozo_Hiba_Yaw_Rate, Elozo_Iterm_Yaw_Rate);
+  PID_egyenlet(Hiba_Rate_Yaw, P_Rate_Yaw, I_Rate_Yaw_Aktiv, D_Rate_Yaw, Elozo_Hiba_Rate_Yaw, Elozo_Iterm_Rate_Yaw);
   Bemenet_Yaw = PIDReturn[0];
-  Elozo_Hiba_Yaw_Rate = PIDReturn[1];
-  Elozo_Iterm_Yaw_Rate = PIDReturn[2];
+  Elozo_Hiba_Rate_Yaw = PIDReturn[1];
+  Elozo_Iterm_Rate_Yaw = PIDReturn[2];
 
   //PID-nek hagyni korrekciós lehetőséget
   if (Bemenet_Gaz > 1800) Bemenet_Gaz = 1800;
 
-  //250Hz 12 bit felbontás
-  Motor_1_bemenet = (Bemenet_Gaz - Bemenet_Roll + Bemenet_Pitch + Bemenet_Yaw);  // 100 %
-  Motor_2_bemenet = (Bemenet_Gaz - Bemenet_Roll - Bemenet_Pitch - Bemenet_Yaw);  //   0 %
-  Motor_3_bemenet = (Bemenet_Gaz + Bemenet_Roll + Bemenet_Pitch - Bemenet_Yaw);  // 100 %
-  Motor_4_bemenet = (Bemenet_Gaz + Bemenet_Roll - Bemenet_Pitch + Bemenet_Yaw);  // 100 %
-
-  if (Motor_1_bemenet > 2000) Motor_1_bemenet = 2000;
-  if (Motor_2_bemenet > 2000) Motor_2_bemenet = 2000;
-  if (Motor_3_bemenet > 2000) Motor_3_bemenet = 2000;
-  if (Motor_4_bemenet > 2000) Motor_4_bemenet = 2000;
-
-  //18%-os alapjárat a motoroknak
-  if (Motor_1_bemenet < Motorok_alapjarat) Motor_1_bemenet = Motorok_alapjarat;
-  if (Motor_2_bemenet < Motorok_alapjarat) Motor_2_bemenet = Motorok_alapjarat;
-  if (Motor_3_bemenet < Motorok_alapjarat) Motor_3_bemenet = Motorok_alapjarat;
-  if (Motor_4_bemenet < Motorok_alapjarat) Motor_4_bemenet = Motorok_alapjarat;
+  // Motorkeverés és motorvezérlő jelek korlátozása
+  Motor_1_bemenet = constrain(Bemenet_Gaz - Bemenet_Roll + Bemenet_Pitch + Bemenet_Yaw, Motorok_alapjarat, Motorok_max);
+  Motor_2_bemenet = constrain(Bemenet_Gaz - Bemenet_Roll - Bemenet_Pitch - Bemenet_Yaw, Motorok_alapjarat, Motorok_max);
+  Motor_3_bemenet = constrain(Bemenet_Gaz + Bemenet_Roll + Bemenet_Pitch - Bemenet_Yaw, Motorok_alapjarat, Motorok_max);
+  Motor_4_bemenet = constrain(Bemenet_Gaz + Bemenet_Roll - Bemenet_Pitch + Bemenet_Yaw, Motorok_alapjarat, Motorok_max);
 
   //ha leszállni szeretnénk
   if (Vevo_Ertekek[2] < 1030) {
